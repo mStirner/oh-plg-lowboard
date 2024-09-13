@@ -1,6 +1,16 @@
 const { Agent } = require("http");
 const WebSocket = require("ws");
 
+// used to prevent conflics for device discovering via labels
+// use plugin UUID for this?
+const MAGIC = "8d89fe9e-1f86-480b-bd25-005b8cadaf19";
+const LABELS = [
+    "lowboard=true",
+    "vendor=custom",
+    "led-strip=ws2801",
+    `magic=${MAGIC}`
+];
+
 module.exports = (info, logger, init) => {
     return init([
         "devices",
@@ -11,31 +21,29 @@ module.exports = (info, logger, init) => {
     ]) => {
 
         logger.info("Lowboard plugin", info);
+        logger.info("To add new device, add them with the following labels:", LABELS);
 
         C_DEVICES.found({
-            meta: {
-                manufacturer: "custom",
-                model: "lowboard"
-            }
+            labels:LABELS
         }, (device) => {
 
-            console.log("Device found", device._id)
+            logger.debug("Device found", device);
 
-            // endpoint handling ------------------------------------------------
-
-            // FIXME: Do this better, than timeout
-            setTimeout(() => {
-
-                let endpoint = C_ENDPOINTS.items.find((endpoint) => {
-                    return endpoint.device === device._id;
-                });
-
-
+            C_ENDPOINTS.found({
+                labels:[
+                    `device=${device._id}`,
+                    `magic=${MAGIC}`,
+                    "lowboard=true",
+                    "vendor=custom",
+                    "led-strip=ws2801"
+                ]
+            }, (endpoint) => {
 
                 let iface = device.interfaces[0];
 
-
                 iface.on("attached", (socket) => {
+
+                    logger.debug("Connector attached socket");
 
                     let agent = iface.httpAgent();
 
@@ -80,65 +88,58 @@ module.exports = (info, logger, init) => {
 
                     });
 
+                });                
+
+            }, async (query) => {
+
+                let endpoint = await C_ENDPOINTS.add({
+                    name: `Lowboard (${device._id})`,
+                    device: device._id,
+                    ...query,
+                    commands: [{
+                        name: "FX = Rainbow",
+                        alias: "FX_RAINBOW",
+                        payload: JSON.stringify({
+                            fx: "rainbow"
+                        })
+                    }, {
+                        name: "FX = Straight",
+                        alias: "FX_STRAIGHT",
+                        payload: JSON.stringify({
+                            fx: "straight"
+                        })
+                    }, {
+                        name: "FX = Lightning",
+                        alias: "FX_LIGHTNING",
+                        payload: JSON.stringify({
+                            fx: "lightning"
+                        })
+                    }, {
+                        name: "FX = Raindrop",
+                        alias: "FX_RAINDROP",
+                        payload: JSON.stringify({
+                            fx: "raindrop"
+                        })
+                    }, {
+                        name: "FX = Aus",
+                        alias: "FX_OFF",
+                        payload: JSON.stringify({
+                            fx: "clear"
+                        })
+                    }].map((cmd) => {
+                        cmd.interface = device.interfaces[0]._id;
+                        return cmd;
+                    })
                 });
+    
+                logger.verbose("Added new device/endpoint", device._id, endpoint._id);
 
-            }, 1000);
+            });
 
-            // endpoint handling ------------------------------------------------
-
+        
         }, async (query) => {
 
-            let device = await C_DEVICES.add({
-                name: "Lowboard",
-                interfaces: [{
-                    settings: {
-                        host: "lowboard.lan",
-                        port: 8080
-                    }
-                }],
-                ...query
-            });
-
-            let endpoint = await C_ENDPOINTS.add({
-                name: "Lowboard",
-                device: device._id,
-                commands: [{
-                    name: "FX = Rainbow",
-                    alias: "FX_RAINBOW",
-                    payload: JSON.stringify({
-                        fx: "rainbow"
-                    })
-                }, {
-                    name: "FX = Straight",
-                    alias: "FX_STRAIGHT",
-                    payload: JSON.stringify({
-                        fx: "straight"
-                    })
-                }, {
-                    name: "FX = Lightning",
-                    alias: "FX_LIGHTNING",
-                    payload: JSON.stringify({
-                        fx: "lightning"
-                    })
-                }, {
-                    name: "FX = Raindrop",
-                    alias: "FX_RAINDROP",
-                    payload: JSON.stringify({
-                        fx: "raindrop"
-                    })
-                }, {
-                    name: "FX = Aus",
-                    alias: "FX_OFF",
-                    payload: JSON.stringify({
-                        fx: "clear"
-                    })
-                }].map((cmd) => {
-                    cmd.interface = device.interfaces[0]._id;
-                    return cmd;
-                })
-            });
-
-            logger.verbose("Added new device/endpoint", device._id, endpoint._id);
+            logger.info("No device/lowboard found, add one with the following labels:", query.labels);
 
         });
 
