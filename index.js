@@ -53,7 +53,7 @@ module.exports = (info, logger, init) => {
                 setTimeout(() => {
 
                     // feedback
-                    logger.debug("Init retry logic & connecto to WebSocket...");
+                    logger.debug(`Init retry logic & connecto to WebSocket for endpoint "${endpoint.name}"...`);
 
                     // debounce calls to worker 100ms
                     // redo can be called multiple times
@@ -69,7 +69,7 @@ module.exports = (info, logger, init) => {
                         });
 
                         ws.once("error", (err) => {
-                            logger.error(`WebSocket error: ${err.message}`);
+                            logger.error(`WebSocket error (${ws.url}): ${err.message}`);
                             redo();
                         });
 
