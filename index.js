@@ -1,5 +1,8 @@
-const { Agent } = require("http");
 const WebSocket = require("ws");
+
+const infinity = require("../../helper/infinity.js");
+const debounce = require("../../helper/debounce.js");
+
 
 // used to prevent conflics for device discovering via labels
 // use plugin UUID for this?
@@ -24,13 +27,13 @@ module.exports = (info, logger, init) => {
         logger.info("To add new device, add them with the following labels:", LABELS);
 
         C_DEVICES.found({
-            labels:LABELS
+            labels: LABELS
         }, (device) => {
 
             logger.debug("Device found", device);
 
             C_ENDPOINTS.found({
-                labels:[
+                labels: [
                     `device=${device._id}`,
                     `magic=${MAGIC}`,
                     "lowboard=true",
@@ -39,56 +42,73 @@ module.exports = (info, logger, init) => {
                 ]
             }, (endpoint) => {
 
-                let iface = device.interfaces[0];
+                // feedback
+                logger.debug("Wait 10s before doing anything...");
 
-                iface.on("attached", (socket) => {
+                // without this timeout, the first bridge call fails with a timeout error
+                // could this because there is a chance that no connectir is vailable?
+                // pending requests are nowhere stored, if no connector is available at the time the iface.bridge()/iface.httpAgent is called
+                // it just goes into void and is never processed
+                // TODO: remove timeout when https://github.com/OpenHausIO/backend/issues/503 fixed
+                setTimeout(() => {
 
-                    logger.debug("Connector attached socket");
+                    // feedback
+                    logger.debug("Init retry logic & connecto to WebSocket...");
 
-                    let agent = iface.httpAgent();
+                    // debounce calls to worker 100ms
+                    // redo can be called multiple times
+                    // e.g. from ws events "error" & "close"
+                    let worker = debounce((redo) => {
 
-                    let ws = new WebSocket(`ws://${iface.settings.host}:${iface.settings.port}`, {
-                        agent
-                    });
+                        let iface = device.interfaces[0];
+                        let { host, port } = iface.settings;
+                        let agent = iface.httpAgent();
 
-                    ws.on("error", (err) => {
-                        console.error("[%s]", ws.url, err);
-                    });
-
-                    ws.on("pong", () => {
-                        console.log("Pong received");
-                    })
-
-                    ws.on("open", () => {
-                        console.log("WebSocket connected to:", ws.url);
-
-
-
-                        //ws.send(`{"fx":"straight"}`);
-
-
-                        endpoint.commands.forEach((command) => {
-                            command.setHandler((cmd, iface, params, done) => {
-                                if (ws.readyState === 1) {
-
-                                    logger.trace("send payload", cmd, cmd.payload);
-
-                                    ws.send(cmd.payload);
-
-                                    done(null, true)
-
-                                } else {
-
-                                    done(new Error("NOT_READY"));
-
-                                }
-                            });
+                        let ws = new WebSocket(`ws://${host}:${port}`, {
+                            agent
                         });
 
+                        ws.once("error", (err) => {
+                            logger.error(`WebSocket error: ${err.message}`);
+                            redo();
+                        });
 
-                    });
+                        ws.once("close", () => {
+                            logger.error(`WebSocket closed from "${ws.url}"`);
+                            redo();
+                        });
 
-                });                
+                        ws.once("open", () => {
+
+                            logger.info("WebSocket connected to:", ws.url);
+
+                            endpoint.commands.forEach((command) => {
+                                command.setHandler((cmd, iface, params, done) => {
+                                    if (ws.readyState === 1) {
+
+                                        logger.trace("send payload", cmd, cmd.payload);
+
+                                        ws.send(cmd.payload);
+
+                                        done(null, true)
+
+                                    } else {
+
+                                        done(new Error("NOT_READY"));
+
+                                    }
+                                });
+                            });
+
+                        });
+
+                    }, 100);
+
+                    // wrap worker into infinity
+                    // delay call to worker
+                    infinity(worker, 5000);
+
+                }, 10000);
 
             }, async (query) => {
 
@@ -131,12 +151,12 @@ module.exports = (info, logger, init) => {
                         return cmd;
                     })
                 });
-    
+
                 logger.verbose("Added new device/endpoint", device._id, endpoint._id);
 
             });
 
-        
+
         }, async (query) => {
 
             logger.info("No device/lowboard found, add one with the following labels:", query.labels);
